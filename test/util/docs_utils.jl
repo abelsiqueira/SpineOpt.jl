@@ -24,10 +24,12 @@
 	    ["object_parameters", "relationship_parameters"] => "Parameters",
 	    ["object_classes"] => "Object Classes",
 	)
+	#@test_logs min_level=Logging.Warn concept_dictionary = SpineOpt.initialize_concept_dictionary(SpineOpt.template(); translation=default_translation)# use this line instead of the line below once the function has been adjusted to account for duplicates in the to/from structure; not needed when the entire building of the documentation is tested
 	concept_dictionary = SpineOpt.initialize_concept_dictionary(SpineOpt.template(); translation=default_translation)
 	@test Set(keys(concept_dictionary)) == Set(values(default_translation))
 	concept_dictionary = SpineOpt.add_cross_references!(concept_dictionary)
 	@test Set(keys(concept_dictionary)) == Set(values(default_translation))
+	# #= use this path instead of the path below to test whether the function behaves properly
 	path = mktempdir()
 	cpt_ref_path = joinpath(path, "src", "concept_reference")
 	mkpath(cpt_ref_path)
@@ -38,5 +40,8 @@
             write(description_path, "\n\n")
         end
     end
-	@test SpineOpt.write_concept_reference_files(concept_dictionary, path) == 0
+	# =#
+	#path = dirname(dirname(@__DIR__))*"/docs"# use this path instead of the path above to test the actual documentation; not needed if the entire building of the documentation is tested
+	@test_logs min_level=Logging.Warn SpineOpt.write_concept_reference_files(concept_dictionary, path)
+	#@test_logs min_level=Logging.Warn include(dirname(dirname(@__DIR__))*"/docs/make.jl")# use this line to test the entire building process of the actual documentation
 end

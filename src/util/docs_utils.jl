@@ -246,7 +246,6 @@ Each file is pieced together from two parts: the preamble automatically generate
 `concept_dictionary`, and a separate description assumed to be found under `docs/src/concept_reference/<name>.md`.
 """
 function write_concept_reference_files(concept_dictionary::Dict, makedocs_path::String)
-    error_count = 0
     for filename in keys(concept_dictionary)
         system_string = ["# $(filename)\n\n"]
         # Loop over the unique names and write their information into the filename under a dedicated section.
@@ -303,7 +302,6 @@ function write_concept_reference_files(concept_dictionary::Dict, makedocs_path::
                 push!(system_string, section * description)
             catch
                 @warn("Description for `$(concept)` not found! Please add a description to `$(description_path)`.")
-                error_count += 1
                 push!(system_string, section * "TODO\n\n")
             end
         end
@@ -312,5 +310,4 @@ function write_concept_reference_files(concept_dictionary::Dict, makedocs_path::
             write(file, system_string)
         end
     end
-    return error_count
 end

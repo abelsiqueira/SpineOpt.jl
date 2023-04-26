@@ -20,6 +20,7 @@
 using SpineOpt
 using SpineInterface
 using Test
+using Logging
 using Dates
 using JuMP
 using PyCall
