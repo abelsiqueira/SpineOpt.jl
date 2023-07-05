@@ -17,10 +17,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #############################################################################
 
-function rerun_spineopt!(
+function rerun_spineopt_standard!(
     m::Model,
-    ::Nothing,
-    ::Nothing,
     url_out::Union{String,Nothing};
     add_user_variables=m -> nothing,
     add_constraints=m -> nothing,
@@ -36,11 +34,7 @@ function rerun_spineopt!(
     @timelog log_level 2 "Creating temporal structure..." generate_temporal_structure!(m)
     @timelog log_level 2 "Creating stochastic structure..." generate_stochastic_structure!(m)
     roll_count = _roll_count(m)
-    @log log_level 2 """
-    NOTE: We will first build the model for the last optimisation window to make sure it can roll that far.
-    Then we will bring the model to the first window to start solving it.
-    """
-    roll_temporal_structure!(m, roll_count)
+    roll_temporal_structure!(m, 1:roll_count)
     init_model!(
         m;
         add_user_variables=add_user_variables,
@@ -48,7 +42,11 @@ function rerun_spineopt!(
         log_level=log_level,
         alternative_objective=alternative_objective
     )
-    @timelog log_level 2 "Bringing model to the first window..." roll_temporal_structure!(m, -roll_count)
+    @timelog log_level 2 "Bringing model to the first window..." begin
+        roll_temporal_structure!(m, 1:roll_count; rev=true)
+        _update_variable_names!(m)
+        _update_constraint_names!(m)
+    end
     try
         run_spineopt_kernel!(
             m,
@@ -73,22 +71,24 @@ end
 
 function _roll_count(m::Model)
     instance = m.ext[:spineopt].instance
-    roll_forward_ = roll_forward(model=instance, _strict=false)
-    roll_forward_ in (nothing, 0) && return 0
-    current_window_end = end_(current_window(m))
-    roll_count = 0
-    while current_window_end < model_end(model=instance)
-        current_window_end += roll_forward_
-        roll_count += 1
+    window_start = model_start(model=instance)
+    i = 1
+    while true
+        rf = roll_forward(model=instance, i=i, _strict=false)
+        if isnothing(rf) || rf == Minute(0) || window_start + rf >= model_end(model=instance)
+            break
+        end
+        window_start += rf
+        i += 1
     end
-    roll_count
+    i - 1
 end
 
 """
 Initialize the given model for SpineOpt: add variables, fix the necessary variables, add constraints and set objective.
 """
 function init_model!(
-    m; add_user_variables=m -> nothing, add_constraints=m -> nothing, log_level=3, alternative_objective=m -> nothing
+    m; add_user_variables=m -> nothing, add_constraints=m -> nothing, alternative_objective=m -> nothing, log_level=3
 )
     @timelog log_level 2 "Adding variables...\n" _add_variables!(
         m; add_user_variables=add_user_variables, log_level=log_level
@@ -111,6 +111,7 @@ function _add_variables!(m; add_user_variables=m -> nothing, log_level=3)
             ("units_shut_down", add_variable_units_shut_down!),
             ("unit_flow", add_variable_unit_flow!),
             ("unit_flow_op", add_variable_unit_flow_op!),
+            ("unit_flow_op_active", add_variable_unit_flow_op_active!),
             ("connection_flow", add_variable_connection_flow!),
             ("connection_intact_flow", add_variable_connection_intact_flow!),
             ("connections_invested", add_variable_connections_invested!),
@@ -167,7 +168,10 @@ function _add_constraints!(m; add_constraints=m -> nothing, log_level=3)
             ("storage_lifetime", add_constraint_storage_lifetime!),
             ("storages_invested_transition", add_constraint_storages_invested_transition!),
             ("operating_point_bounds", add_constraint_operating_point_bounds!),
-            ("operating_point_sum", add_constraint_operating_point_sum!),
+            ("operating_point_rank", add_constraint_operating_point_rank!),
+            ("unit_flow_op_bounds", add_constraint_unit_flow_op_bounds!),
+            ("unit_flow_op_rank", add_constraint_unit_flow_op_rank!),
+            ("unit_flow_op_sum", add_constraint_unit_flow_op_sum!),
             ("fix_ratio_out_in_unit_flow", add_constraint_fix_ratio_out_in_unit_flow!),
             ("max_ratio_out_in_unit_flow", add_constraint_max_ratio_out_in_unit_flow!),
             ("min_ratio_out_in_unit_flow", add_constraint_min_ratio_out_in_unit_flow!),
@@ -234,8 +238,7 @@ function _set_objective!(m::Model; alternative_objective=m -> nothing)
     if alt_obj == nothing
         _create_objective_terms!(m)
         total_discounted_costs = sum(
-            in_window + beyond_window
-            for (in_window, beyond_window) in values(m.ext[:spineopt].objective_terms)
+            in_window + beyond_window for (in_window, beyond_window) in values(m.ext[:spineopt].objective_terms)
         )
         if !iszero(total_discounted_costs)
             @objective(m, Min, total_discounted_costs)
@@ -260,10 +263,8 @@ function _create_objective_terms!(m)
 end
 
 function _init_outputs!(m::Model)
-    for r in model__report(model=m.ext[:spineopt].instance)
-        for o in report__output(report=r)
-            get!(m.ext[:spineopt].outputs, o.name, Dict{NamedTuple,Dict}())
-        end
+    for out in keys(m.ext[:spineopt].reports_by_output)
+        get!(m.ext[:spineopt].outputs, out.name, Dict{NamedTuple,Dict}())
     end
 end
 
@@ -277,7 +278,6 @@ function run_spineopt_kernel!(
     alternative="",
     write_as_roll=0,
     resume_file_path=nothing,
-
 )
     k = _resume_run!(m, resume_file_path, update_constraints, log_level, update_names)
     k === nothing && return m
@@ -292,7 +292,7 @@ function run_spineopt_kernel!(
             _dump_resume_data(m, k, resume_file_path)
             _clear_results!(m)
         end
-        if @timelog log_level 2 "Rolling temporal structure...\n" !roll_temporal_structure!(m)
+        if @timelog log_level 2 "Rolling temporal structure...\n" !roll_temporal_structure!(m, k)
             @timelog log_level 2 " ... Rolling complete\n" break
         end
         update_model!(m; update_constraints=update_constraints, log_level=log_level, update_names=update_names)
@@ -313,9 +313,9 @@ function _resume_run!(m, resume_file_path, update_constraints, log_level, update
         resume_data = JSON.parsefile(resume_file_path)
         k, values = resume_data["window"], resume_data["values"]
         @log log_level 1 "Using data from $resume_file_path to skip through windows 1 to $k..."
-        roll_temporal_structure!(m::Model, k - 1)
+        roll_temporal_structure!(m, 1:(k - 1))
         _load_variable_values!(m, values)
-        if !roll_temporal_structure!(m::Model)
+        if !roll_temporal_structure!(m, k)
             @log log_level 1 "Nothing to resume - window $k was the last one"
             nothing
         else
@@ -401,6 +401,7 @@ end
 The value of a JuMP variable, rounded if necessary.
 """
 _variable_value(v::VariableRef) = (is_integer(v) || is_binary(v)) ? round(Int, JuMP.value(v)) : JuMP.value(v)
+_variable_value(x::Call) = realize(x)
 
 """
 Save the value of the objective terms in a model.
@@ -411,7 +412,7 @@ function _save_objective_values!(m::Model)
         m.ext[:spineopt].values[term] = Dict(ind => _value(realize(in_window)))
     end
     m.ext[:spineopt].values[:total_costs] = Dict(
-        ind => sum(m.ext[:spineopt].values[term][ind] for term in keys(m.ext[:spineopt].objective_terms))
+        ind => sum(m.ext[:spineopt].values[term][ind] for term in keys(m.ext[:spineopt].objective_terms); init=0)
     )
     nothing
 end
@@ -441,9 +442,27 @@ function _calculate_duals_cplex(m; log_level=3)
     CPLEX.CPXchgprobtype(cplex_model.env, cplex_model.lp, CPLEX.CPXPROB_FIXEDMILP)
     @timelog log_level 1 "Optimizing LP..." CPLEX.CPXlpopt(cplex_model.env, cplex_model.lp)
     _save_marginal_values!(m)
-    _save_bound_marginal_values!(m)
+    _save_bound_marginal_values!(m, v -> _reduced_cost_cplex(v, cplex_model, CPLEX))
     CPLEX.CPXchgprobtype(cplex_model.env, cplex_model.lp, prob_type)
     true
+end
+
+function _reduced_cost_cplex(v::VariableRef, cplex_model, CPLEX)
+    m = owner_model(v)
+    has_duals(m) || return nothing
+    # If v is not integer nor binary, it is ok to use JuMP.reduced_cost
+    is_integer(v) || is_binary(v) || return reduced_cost(v)
+    # Otherwise, we can't use JuMP.reduced_cost because it wouldn't know that the variable is actually fixed
+    # and will return the wrong result.
+    # The thing is, CPLEX.CPXchgprobtype(..., CPLEX.CPXPROB_FIXEDMILP) doesn't change the *JuMP* variable type to fixed;
+    # it just fixes the variable *inside* CPLEX.
+    # The below computation correctly accounts for the fact that the variable is fixed.
+    sign = objective_sense(m) == MIN_SENSE ? 1.0 : -1.0
+    col = Cint(CPLEX.column(cplex_model, index(v)) - 1)
+    p = Ref{Cdouble}()
+    CPLEX.CPXgetdj(cplex_model.env, cplex_model.lp, p, col, col)
+    rc = p[]
+    sign * rc
 end
 
 function _calculate_duals_fallback(m; log_level=3)
@@ -451,8 +470,10 @@ function _calculate_duals_fallback(m; log_level=3)
     lp_solver = m.ext[:spineopt].lp_solver
     @timelog log_level 1 "Setting LP solver $(lp_solver)..." set_optimizer(m_dual_lp, lp_solver)
     @timelog log_level 1 "Fixing integer variables..." _fix_integer_vars(m, ref_map)
-    _save_marginal_values!(m, ref_map)
-    _save_bound_marginal_values!(m, ref_map)
+    dual_fallback(con) = DualPromise(ref_map[con])
+    reduced_cost_fallback(var) = ReducedCostPromise(ref_map[var])
+    _save_marginal_values!(m, dual_fallback)
+    _save_bound_marginal_values!(m, reduced_cost_fallback)
     if isdefined(Threads, Symbol("@spawn"))
         task = Threads.@spawn @timelog log_level 1 "Optimizing LP..." optimize!(m_dual_lp)
         lock(m.ext[:spineopt].dual_solves_lock)
@@ -497,38 +518,30 @@ function _fix_integer_vars(m::Model, ref_map::ReferenceMap)
     end
 end
 
-function _save_marginal_values!(m::Model, ref_map=nothing)
+function _save_marginal_values!(m::Model, dual=_dual)
     for (constraint_name, con) in m.ext[:spineopt].constraints
         output_name = Symbol(string("constraint_", constraint_name))
-        haskey(m.ext[:spineopt].outputs, output_name) || continue
-        m.ext[:spineopt].values[output_name] = Dict(ind => _dual(con[ind], ref_map) for ind in keys(con))
+        m.ext[:spineopt].values[output_name] = Dict(i => dual(c) for (i, c) in con)
     end
 end
 
-function _save_bound_marginal_values!(m::Model, ref_map=nothing)
+function _save_bound_marginal_values!(m::Model, reduced_cost=_reduced_cost)
     for (variable_name, var) in m.ext[:spineopt].variables
         output_name = Symbol(string("bound_", variable_name))
-        haskey(m.ext[:spineopt].outputs, output_name) || continue
-        m.ext[:spineopt].values[output_name] = Dict(ind => _reduced_cost(var[ind], ref_map) for ind in keys(var))
+        m.ext[:spineopt].values[output_name] = Dict(i => reduced_cost(v) for (i, v) in var)
     end
 end
 
-_dual(con, ref_map::JuMP.ReferenceMap) = DualPromise(ref_map[con])
-_dual(con, ::Nothing) = has_duals(owner_model(con)) ? dual(con) : nothing
+_dual(con) = has_duals(owner_model(con)) ? dual(con) : nothing
 
-_reduced_cost(var, ref_map::JuMP.ReferenceMap) = ReducedCostPromise(ref_map[var])
-_reduced_cost(var, ::Nothing) = has_duals(owner_model(var)) ? reduced_cost(var) : nothing
+_reduced_cost(var) = has_duals(owner_model(var)) ? reduced_cost(var) : nothing
 
 """
 Save the outputs of a model.
 """
 function _save_outputs!(m; iterations=nothing)
-    reports_by_output = Dict()
-    for rpt in model__report(model=m.ext[:spineopt].instance), out in report__output(report=rpt)
-        push!(get!(reports_by_output, out, []), rpt)
-    end
     is_last_window = end_(current_window(m)) >= model_end(model=m.ext[:spineopt].instance)
-    for (out, rpts) in reports_by_output
+    for (out, rpts) in m.ext[:spineopt].reports_by_output
         value = get(m.ext[:spineopt].values, out.name, nothing)
         crop_to_window = !is_last_window && all(overwrite_results_on_rolling(report=rpt, output=out) for rpt in rpts)
         if _save_output!(m, out, value, crop_to_window; iterations=iterations)
@@ -923,7 +936,7 @@ function _update_constraint_names!(m)
         con_key_clean = _sanitize_constraint_name(con_key_raw)                            
         for (inds, con) in cons        
             constraint_name = _sanitize_constraint_name(string(con_key_clean, inds))                            
-            set_name(con, constraint_name)
+            _set_name(con, constraint_name)
         end
     end
 end
@@ -935,10 +948,13 @@ end
 function _update_variable_names!(m)
     for (name, var) in m.ext[:spineopt].variables
         for (inds, v) in var
-            set_name(v, _base_name(name, inds))
+            _set_name(v, _base_name(name, inds))
         end
     end
 end
+
+_set_name(x::Union{VariableRef,ConstraintRef}, name) = set_name(x, name)
+_set_name(::Union{Call,Nothing}, name) = nothing
 
 function _fix_history!(m::Model)
     for (name, definition) in m.ext[:spineopt].variables_definition
@@ -953,10 +969,13 @@ function _fix_history_variable!(m::Model, name::Symbol, indices)
         history_t = t_history_t(m; t=ind.t)
         history_t === nothing && continue
         for history_ind in indices(m; ind..., t=history_t)
-            fix(var[history_ind], val[ind]; force=true)
+            _fix(var[history_ind], val[ind]; force=true)
         end
     end
 end
+
+_fix(v::VariableRef, x; kwargs...) = fix(v, x; kwargs...)
+_fix(::Call, x; kwargs...) = nothing
 
 function apply_non_anticipativity_constraints!(m::Model)
     for (name, definition) in m.ext[:spineopt].variables_definition
@@ -971,9 +990,9 @@ function _apply_non_anticipativity_constraint!(m, name::Symbol, definition::Dict
     non_anticipativity_time = definition[:non_anticipativity_time]
     non_anticipativity_time === nothing && return
     non_anticipativity_margin = definition[:non_anticipativity_margin]
-    window_start = start(current_window(m))
-    roll_forward_ = roll_forward(model=m.ext[:spineopt].instance)
-    for ent in SpineInterface.indices_as_tuples(non_anticipativity_time)
+    w_start = start(current_window(m))
+    w_length = end_(current_window(m)) - w_start
+    for ent in indices_as_tuples(non_anticipativity_time)
         for ind in indices(m; t=time_slice(m), ent...)
             non_ant_time = non_anticipativity_time(; ind..., _strict=false)
             non_ant_margin = if non_anticipativity_margin === nothing
@@ -981,8 +1000,8 @@ function _apply_non_anticipativity_constraint!(m, name::Symbol, definition::Dict
             else
                 non_anticipativity_margin(; ind..., _strict=false)
             end
-            if non_ant_time != nothing && start(ind.t) < window_start +  non_ant_time
-                next_t = to_time_slice(m; t=ind.t + roll_forward_)
+            if non_ant_time != nothing && start(ind.t) < w_start + non_ant_time
+                next_t = to_time_slice(m; t=ind.t + w_length)
                 next_inds = indices(m; ind..., t=next_t)
                 if !isempty(next_inds)
                     next_ind = first(next_inds)

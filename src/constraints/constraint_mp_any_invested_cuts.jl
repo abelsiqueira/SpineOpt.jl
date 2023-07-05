@@ -21,9 +21,8 @@
     add_constraint_mp_units_invested_cut!(m::Model)
 
 Adds Benders optimality cuts for the units_available constraint. This tells the master problem the mp_objective
-    cost improvement that is possible for an increase in the number of units available for a unit.
+cost improvement that is possible for an increase in the number of units available for a unit and so on.
 """
-
 function add_constraint_mp_any_invested_cuts!(m::Model)
     @fetch (
         mp_objective_lowerbound,
@@ -31,7 +30,7 @@ function add_constraint_mp_any_invested_cuts!(m::Model)
         connections_invested_available,
         storages_invested_available
     ) = m.ext[:spineopt].variables
-    m.ext[:spineopt].constraints[:mp_units_invested_cut] = Dict(
+    m.ext[:spineopt].constraints[:mp_any_invested_cut] = Dict(
         (benders_iteration=bi, t=t1) => @constraint(
             m,
             + mp_objective_lowerbound[t1]
@@ -39,29 +38,35 @@ function add_constraint_mp_any_invested_cuts!(m::Model)
             + sp_objective_value_bi(benders_iteration=bi)
             # operating cost benefit from investments in units
             + expr_sum(
-                (units_invested_available[u, s, t] - units_invested_available_bi(benders_iteration=bi, unit=u, t=t))
-                * units_available_mv(benders_iteration=bi, unit=u, t=t)
-                for (u, s, t) in units_invested_available_indices(m);
+                (
+                    + units_invested_available[u, s, t]
+                    - internal_fix_units_invested_available(unit=u, stochastic_scenario=s, t=t)
+                )
+                * units_on_mv(unit=u, stochastic_scenario=s, t=t)
+                for (u, s, t) in units_invested_available_indices(m)
+                if !isnan(units_on_mv(unit=u, stochastic_scenario=s, t=t));
                 init=0,
             )
             # operating cost benefit from investments in connections
             + expr_sum(
                 (
                     + connections_invested_available[c, s, t]
-                    - connections_invested_available_bi(benders_iteration=bi, connection=c, t=t)
+                    - internal_fix_connections_invested_available(connection=c, stochastic_scenario=s, t=t)
                 )
-                * connections_invested_available_mv(benders_iteration=bi, connection=c, t=t)
-                for (c, s, t) in connections_invested_available_indices(m);
+                * connections_invested_available_mv(connection=c, stochastic_scenario=s, t=t)
+                for (c, s, t) in connections_invested_available_indices(m)
+                if !isnan(connections_invested_available_mv(connection=c, stochastic_scenario=s, t=t));
                 init=0,
             )
             # operating cost benefit from investments in storages
             + expr_sum(
                 (
                     + storages_invested_available[n, s, t]
-                    - storages_invested_available_bi(benders_iteration=bi, node=n, t=t)
+                    - internal_fix_storages_invested_available(node=n, stochastic_scenario=s, t=t)
                 )
-                * storages_invested_available_mv(benders_iteration=bi, node=n, t=t)
-                for (n, s, t) in storages_invested_available_indices(m);
+                * storages_invested_available_mv(node=n, stochastic_scenario=s, t=t)
+                for (n, s, t) in storages_invested_available_indices(m)
+                if !isnan(storages_invested_available_mv(node=n, stochastic_scenario=s, t=t));
                 init=0,
             )
         )
