@@ -11,11 +11,11 @@ The energy balance is enforced by the following constraint:
 \begin{aligned}
 & v_{node\_injection}(n,s,t) \\
 & + \sum_{\substack{(conn,n',d_{in},s,t) \in connection\_flow\_indices: \\ d_{out} == :to\_node}}
- v_{connection\_flow}(conn,n',d_{in},s,t)\\
+v_{connection\_flow}(conn,n',d_{in},s,t)\\
 & - \sum_{\substack{(conn,n',d_{out},s,t) \in connection\_flow\_indices: \\ d_{out} == :from\_node}}
- v_{connection\_flow}(conn,n',d_{out},s,t)\\
- & + v_{node\_slack\_pos}(n,s,t) \\
- & - v_{node\_slack\_neg}(n,s,t) \\
+v_{connection\_flow}(conn,n',d_{out},s,t)\\
+& + v_{node\_slack\_pos}(n,s,t) \\
+& - v_{node\_slack\_neg}(n,s,t) \\
 & \{>=,==,<=\} \\
 & 0 \\
 & \forall (n,s,t) \in node\_stochastic\_time\_indices: \\
@@ -23,6 +23,8 @@ The energy balance is enforced by the following constraint:
 & \nexists ng \in groups(n) : balance\_type\_group \\
 \end{aligned}
 ```
+
+
 The constraint consists of the [node injections](@ref constraint_node_injection), the net [connection\_flow](@ref)s and [node slack variables](@ref Variables).
 
 ### [Node injection](@id constraint_node_injection)
