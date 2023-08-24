@@ -480,24 +480,3 @@ function docs_from_instructionlist(alldocs, instructionlist)
     end
     return md
 end
-
-"""
-    fix_documenter_behavior(md)
-
-When using documenter, in particular @doc raw,
-```math X ``` is converted to \$\$ X \$\$ which documenter cannot read -_-
-and backslach underscore is converted to underscore
-"""
-function fix_documenter_behavior(md)
-    split_md = split(md, "\n")
-    toggle = true
-    fixed_md = []
-    for smd in split_md
-        if smd == "\$\$"
-            smd = "```" * "math"^Int(toggle)
-            toggle = !toggle
-        end
-        push!(fixed_md,smd)
-    end
-    return join(fixed_md, "\n")
-end
