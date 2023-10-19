@@ -21,6 +21,7 @@ using SpineOpt
 using SpineInterface
 using Test
 using Dates
+using JSON
 using JuMP
 using PyCall
 
@@ -109,6 +110,8 @@ end
     include("objective/objective.jl")
     include("util/misc.jl")
     include("util/docs_utils.jl")
+    include("examples/examples.jl")
+    include("examples/advanced_test_systemA5.jl")
     include("run_spineopt.jl")
     include("run_spineopt_benders.jl")
 end

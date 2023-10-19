@@ -12,6 +12,7 @@
 *.sqlite-journal
 *test.sqlite
 *test_out.sqlite
+*test_systemA5.sqlite
 
 docs/build/
 docs/site/
