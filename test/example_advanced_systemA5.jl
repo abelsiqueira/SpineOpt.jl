@@ -1,4 +1,4 @@
-pathA5 = joinpath(@__DIR__, "..". "..", "examples", "system_A5.json")
+pathA5 = joinpath(dirname(@__DIR__), "system_A5.json")
 
 url_in = "sqlite://"
 test_data = JSON.parsefile(pathA5)

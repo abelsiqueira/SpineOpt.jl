@@ -1,4 +1,4 @@
-examplepath = joinpath(@__DIR__, "..", "..","examples")
+examplepath = joinpath(dirname(@__DIR__),"examples")
 
 for examplefile in readdir(examplepath)
     examplejson = joinpath(examplepath, examplefile)
