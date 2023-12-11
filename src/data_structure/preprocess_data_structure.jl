@@ -532,11 +532,9 @@ end
 Process the `model__default_investment_temporal_block` relationship.
 
 If a `unit__investment_temporal_block` relationship is not defined, then create one using
-`model__default_investment_temporal_block`. Similarly, add the corresponding `model__temporal_block` relationship
-if it is not already defined.
+`model__default_investment_temporal_block`.
 """
 function expand_model__default_investment_temporal_block()
-    add_relationships!(model__temporal_block, model__default_investment_temporal_block())
     add_relationships!(
         unit__investment_temporal_block,
         [
@@ -571,11 +569,9 @@ end
 Process the `model__default_investment_stochastic_structure` relationship.
 
 If a `unit__investment_stochastic_structure` relationship is not defined, then create one using
-`model__default_investment_stochastic_structure`. Similarly, add the corresponding `model__stochastic_structure`
-relationship if it is not already defined.
+`model__default_investment_stochastic_structure`.
 """
 function expand_model__default_investment_stochastic_structure()
-    add_relationships!(model__stochastic_structure, model__default_investment_stochastic_structure())
     add_relationships!(
         unit__investment_stochastic_structure,
         [
@@ -613,11 +609,9 @@ end
     expand_model__default_stochastic_structure()
 
 Expand the `model__default_stochastic_structure` relationship to all `nodes` without `node__stochastic_structure`
-and `units_on` without `units_on__stochastic_structure`. Similarly, add the corresponding `model__stochastic_structure`
-relationship if it not already defined.
+and `units_on` without `units_on__stochastic_structure`.
 """
 function expand_model__default_stochastic_structure()
-    add_relationships!(model__stochastic_structure, model__default_stochastic_structure())
     add_relationships!(
         node__stochastic_structure,
         unique(
@@ -643,7 +637,6 @@ Expand the `model__default_temporal_block` relationship to all `nodes` without `
 and `units_on` without `units_on_temporal_block`.
 """
 function expand_model__default_temporal_block()
-    add_relationships!(model__temporal_block, model__default_temporal_block())
     add_relationships!(
         node__temporal_block,
         unique(
@@ -821,7 +814,10 @@ function generate_is_boundary()
         has_boundary_conn = false
         for (conn, _d) in connection__from_node(node=n)
             remote_commodities = unique(
-                c for (remote_n, _d) in connection__to_node(connection=conn) for c in node__commodity(node=remote_n)
+                c 
+                for (remote_n, _d) in connection__to_node(connection=conn)
+                if remote_n != n
+                for c in node__commodity(node=remote_n)
             )
             if !(c in remote_commodities)
                 has_boundary_conn = true
