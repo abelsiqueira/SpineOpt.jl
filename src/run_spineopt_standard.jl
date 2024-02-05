@@ -254,12 +254,13 @@ function run_spineopt_kernel!(
     output_suffix=(;),
     log_prefix="",
     handle_window_solved=(m, k) -> nothing,
+    handle_window_about_to_solve=(m, k) -> nothing,
 )
     k = _resume_run!(m, resume_file_path; log_level, update_names)
     k === nothing && return m
     while true
-        m.ext[:spineopt].temporal_structure[:current_window_number] = k
         @log log_level 1 "\n$(log_prefix)Window $k: $(current_window(m))"
+        handle_window_about_to_solve(m, k)
         optimize_model!(
             m; log_level=log_level, calculate_duals=calculate_duals, output_suffix=output_suffix
         ) || return false
@@ -920,7 +921,7 @@ function _update_variable_names!(m, names=keys(m.ext[:spineopt].variables))
         var = m.ext[:spineopt].variables[name]
         # NOTE: only update names for the representative variables
         # This is achieved by using the indices function from the variable definition
-        for ind in m.ext[:spineopt].variables_definition[name][:indices](m)
+        for ind in m.ext[:spineopt].variables_definition[name][:indices](m; t=[time_slice(m); history_time_slice(m)])
             _set_name(var[ind], _base_name(name, ind))
         end
     end
